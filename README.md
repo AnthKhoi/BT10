@@ -54,11 +54,19 @@ BAITAP10.1/
 
 ## 2. Chi tiết 10 bước thực hiện theo bài giảng
 
-### Bước 1: Thêm Dependency (Slide 15)
-- Sử dụng thư viện **JJWT 0.12.6**:
-  - `io.jsonwebtoken:jjwt-api:0.12.6`
-  - `io.jsonwebtoken:jjwt-impl:0.12.6`
-  - `io.jsonwebtoken:jjwt-jackson:0.12.6`
+### Bước 1: Thêm Dependency (Slide 15 & Yêu cầu sử dụng Nimbus)
+- Sử dụng thư viện **Nimbus JOSE + JWT** thay thế cho JJWT:
+  ```xml
+  <dependency>
+      <groupId>com.nimbusds</groupId>
+      <artifactId>nimbus-jose-jwt</artifactId>
+      <version>9.37.3</version>
+  </dependency>
+  ```
+- **Lý do & Ưu điểm của Nimbus JOSE + JWT:**
+  - Hỗ trợ đầy đủ bộ tiêu chuẩn JOSE (Javascript Object Signing and Encryption - RFC 7519, RFC 7515, RFC 7516).
+  - Tách bạch rõ ràng giữa `JWSHeader`, `JWTClaimsSet`, `JWSSigner (MACSigner)` và `JWSVerifier (MACVerifier)`.
+  - Hiệu năng cao, bảo mật chặt chẽ và tương thích tốt với Spring Security 6 / OAuth2 Resource Server.
 - Spring Boot Starter Web, Security, Data JPA, Thymeleaf.
 - Hỗ trợ cả **H2 In-Memory Database** (chạy ngay) và **MySQL / SQL Server**.
 
@@ -78,10 +86,12 @@ BAITAP10.1/
 - `AuthenticationService.java`:
   - `signup()`: mã hóa mật khẩu bằng BCryptPasswordEncoder và lưu User.
   - `authenticate()`: gọi `authenticationManager.authenticate(...)` để kiểm tra tài khoản.
-- `JwtService.java`:
-  - Ký token với thuật toán HMAC-SHA256 (`Jwts.SIG.HS256`).
-  - Giải mã và trích xuất Claims, Username, hạn dùng `expiration`.
-  - Kiểm tra token hợp lệ `isTokenValid()`.
+- `JwtService.java` (Triển khai bằng **Nimbus JOSE + JWT**):
+  - Tạo `JWSHeader(JWSAlgorithm.HS256)`.
+  - Đóng gói claims bằng `JWTClaimsSet.Builder()`.
+  - Ký token với `SignedJWT` và `MACSigner`.
+  - Xác thực và kiểm tra chữ ký với `MACVerifier`.
+  - Trích xuất Subject (email) và kiểm tra hạn sử dụng `expirationTime`.
 - `application.properties`: Cổng `8005`, bí mật khóa HMAC `security.jwt.secret-key`, thời hạn `security.jwt.expiration-time=3600000` (1 giờ).
 
 ### Bước 5: Cấu hình `ApplicationConfiguration` (Slide 22)

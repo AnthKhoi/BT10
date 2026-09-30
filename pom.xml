@@ -41,8 +41,15 @@
         </dependency>
 
         <!-- ============================================== -->
-        <!-- Bước 1 trong Slide: JJWT (io.jsonwebtoken)     -->
+        <!-- Thu vien Nimbus JOSE + JWT thay the cho JJWT   -->
         <!-- ============================================== -->
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>9.37.3</version>
+        </dependency>
+
+        <!-- JJWT (io.jsonwebtoken) -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-api</artifactId>

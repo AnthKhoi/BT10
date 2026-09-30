@@ -1,20 +1,26 @@
 package vn.iotstar.services;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.io.Decoders;
-import io.jsonwebtoken.security.Keys;
+import com.nimbusds.jose.*;
+import com.nimbusds.jose.crypto.MACSigner;
+import com.nimbusds.jose.crypto.MACVerifier;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
-import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 
+/**
+ * Service xu ly JSON Web Token su dung thu vien Nimbus JOSE + JWT
+ * Thay the cho thu vien JJWT (io.jsonwebtoken).
+ */
 @Service
 public class JwtService {
 
@@ -25,11 +31,11 @@ public class JwtService {
     private long jwtExpiration;
 
     public String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
+        return extractClaim(token, JWTClaimsSet::getSubject);
     }
 
-    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = extractAllClaims(token);
+    public <T> T extractClaim(String token, Function<JWTClaimsSet, T> claimsResolver) {
+        final JWTClaimsSet claims = extractAllClaims(token);
         return claimsResolver.apply(claims);
     }
 
@@ -50,13 +56,35 @@ public class JwtService {
             UserDetails userDetails,
             long expiration
     ) {
-        return Jwts.builder()
-                .claims(extraClaims)
-                .subject(userDetails.getUsername())
-                .issuedAt(new Date(System.currentTimeMillis()))
-                .expiration(new Date(System.currentTimeMillis() + expiration))
-                .signWith(getSignInKey(), Jwts.SIG.HS256)
-                .compact();
+        try {
+            // 1. Tao Header voi thuat toan HMAC-SHA256 (HS256)
+            JWSHeader header = new JWSHeader(JWSAlgorithm.HS256);
+
+            // 2. Tao ClaimsSet Payload
+            Date now = new Date(System.currentTimeMillis());
+            Date expiryDate = new Date(System.currentTimeMillis() + expiration);
+
+            JWTClaimsSet.Builder claimsBuilder = new JWTClaimsSet.Builder()
+                    .subject(userDetails.getUsername())
+                    .issueTime(now)
+                    .expirationTime(expiryDate);
+
+            if (extraClaims != null) {
+                extraClaims.forEach(claimsBuilder::claim);
+            }
+
+            JWTClaimsSet claimsSet = claimsBuilder.build();
+
+            // 3. Ky token bang MACSigner cua Nimbus
+            SignedJWT signedJWT = new SignedJWT(header, claimsSet);
+            JWSSigner signer = new MACSigner(getSigningKeyBytes());
+            signedJWT.sign(signer);
+
+            // 4. Tra ve chuoi JWT format: header.payload.signature
+            return signedJWT.serialize();
+        } catch (JOSEException e) {
+            throw new RuntimeException("Error signing JWT with Nimbus: " + e.getMessage(), e);
+        }
     }
 
     public boolean isTokenValid(String token, UserDetails userDetails) {
@@ -65,37 +93,57 @@ public class JwtService {
     }
 
     private boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
+        Date expiration = extractExpiration(token);
+        return expiration != null && expiration.before(new Date());
     }
 
-    private Date extractExpiration(String token) {
-        return extractClaim(token, Claims::getExpiration);
+    public Date extractExpiration(String token) {
+        return extractClaim(token, JWTClaimsSet::getExpirationTime);
     }
 
-    private Claims extractAllClaims(String token) {
-        return Jwts.parser()
-                .verifyWith(getSignInKey())
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
-    }
-
-    private SecretKey getSignInKey() {
-        byte[] keyBytes;
+    public JWTClaimsSet extractAllClaims(String token) {
         try {
-            keyBytes = Decoders.BASE64.decode(secretKey);
-            if (keyBytes.length < 32) {
-                keyBytes = secretKey.getBytes(StandardCharsets.UTF_8);
+            // 1. Parse chuoi JWT thanh SignedJWT
+            SignedJWT signedJWT = SignedJWT.parse(token);
+
+            // 2. Xac minh chu ky bang MACVerifier cua Nimbus
+            JWSVerifier verifier = new MACVerifier(getSigningKeyBytes());
+            if (!signedJWT.verify(verifier)) {
+                throw new BadCredentialsException("The JWT signature is invalid");
             }
+
+            JWTClaimsSet claimsSet = signedJWT.getJWTClaimsSet();
+
+            // 3. Kiem tra han su dung cua Token
+            Date expirationTime = claimsSet.getExpirationTime();
+            if (expirationTime != null && expirationTime.before(new Date())) {
+                throw new BadCredentialsException("The JWT token has expired");
+            }
+
+            return claimsSet;
+        } catch (BadCredentialsException e) {
+            throw e;
         } catch (Exception e) {
+            throw new BadCredentialsException("The JWT token is invalid: " + e.getMessage(), e);
+        }
+    }
+
+    private byte[] getSigningKeyBytes() {
+        byte[] keyBytes = null;
+        try {
+            keyBytes = Base64.getDecoder().decode(secretKey);
+        } catch (Exception ignored) {
+        }
+
+        if (keyBytes == null || keyBytes.length < 32) {
             keyBytes = secretKey.getBytes(StandardCharsets.UTF_8);
         }
 
         if (keyBytes.length < 32) {
             byte[] padded = new byte[32];
             System.arraycopy(keyBytes, 0, padded, 0, keyBytes.length);
-            return Keys.hmacShaKeyFor(padded);
+            return padded;
         }
-        return Keys.hmacShaKeyFor(keyBytes);
+        return keyBytes;
     }
 }
